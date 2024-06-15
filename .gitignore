@@ -9,4 +9,4 @@ node_modules/
 
 # Игнорировать файлы конфигурации IDE
 .idea/
-.vscode/
+.vscode/.env
