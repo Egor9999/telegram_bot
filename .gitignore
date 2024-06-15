@@ -3,6 +3,7 @@
 
 # Игнорировать файлы логов
 *.log
+*.txt
 
 # Игнорировать папку node_modules
 node_modules/
@@ -10,3 +11,4 @@ node_modules/
 # Игнорировать файлы конфигурации IDE
 .idea/
 .vscode/.env
+.env
