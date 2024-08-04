@@ -1,4 +1,4 @@
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
 from dotenv import load_dotenv
 from telegram import Update
 from pathlib import Path
@@ -8,133 +8,147 @@ import psycopg2
 import paramiko
 import logging
 
-#Логирование работы программы: 
-logging.basicConfig(filename='myProgramLog.txt', level=logging.DEBUG, format=' %(asctime)s - %(levelname)s - %(message)s', encoding="utf-8")
-logging.debug('Отладочная информация.')
-logging.info('Работает модуль logging.')
-logging.warning('Риск получения сообщения об ошибке.')
-logging.error('Произошла ошибка.')
-logging.critical('Программа не может выполняться.')
+# Настройка логирования
+logging.basicConfig(filename='myProgramLog.txt', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s', encoding="utf-8")
+logger = logging.getLogger(__name__)
 
-#Функция для удаленного доступа к машине с которой будет собираться информация о работе:
-def remote_command(command):
-    # Данные для подключения к удаленному серверу
-    host = os.getenv('HOST')
-    port = os.getenv('PORT')
-    username = os.getenv('USER')
-    password = os.getenv('PASSWORD')
-    # Создание SSH клиента
+logger.debug('Отладочная информация.')
+logger.info('Работает модуль logging.')
+logger.warning('Риск получения сообщения об ошибке.')
+logger.error('Произошла ошибка.')
+logger.critical('Программа не может выполняться.')
+
+# Функция для удаленного доступа к машине с которой будет собираться информация о работе:
+def remote_command(ssh_client, hostname, port, username, password, command):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client.connect(hostname=host, username=username, password=password)
+        logger.info(f"Connecting to {hostname}:{port} as {username}")
+        client.connect(hostname=hostname, port=port, username=username, password=password)
         stdin, stdout, stderr = client.exec_command(command)
         result = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            logger.error(f"Error executing command on {hostname}: {error}")
+            return error
         return result
+    except Exception as e:
+        logger.error(f"Error connecting to {hostname}: {e}")
+        return str(e)
     finally:
-        # Закрытие соединения
         client.close()
+
+# Пример использования функции для нескольких хостов
+hosts = [
+    {'HOST': os.getenv('HOST1'), 'PORT': os.getenv('PORT1'), 'USER': os.getenv('USER1'), 'PASSWORD': os.getenv('PASSWORD1')},
+    {'HOST': os.getenv('HOST2'), 'PORT': os.getenv('PORT2'), 'USER': os.getenv('USER2'), 'PASSWORD': os.getenv('PASSWORD2')}
+]
 
 # Функция для поиска телефонных номеров в тексте
 def find_phone_numbers(text):
-    # Регулярное выражение для поиска телефонных номеров
     phone_pattern = re.compile(r'\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}')
     return phone_pattern.findall(text)
+
 # Функция для обработки команды /find_phone_numbers
 def find_phone_numbers_command(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Отправьте текст, в котором вы хотите найти телефонные номера.")
-        
+
 # Функция для поиска адресов электронной почты в тексте
 def find_emails(text):
-    # Регулярное выражение для поиска адресов электронной почты
     email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
     return email_pattern.findall(text)
+
 # Функция для обработки команды /find_emails
 def find_emails_command(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Отправьте текст, в котором вы хотите найти адреса электронных почт.")
 
 # Функция для проверки сложности пароля
 def verify_password(password):
-    # Проверка длины пароля
-    if len(password) < 8:        
+    if len(password) < 8:
         return "Слабый пароль: пароль должен содержать не менее 8 символов"
-    # Проверка наличия цифр
     if not re.search(r'\d', password):
         return "Слабый пароль: пароль должен содержать хотя бы одну цифру"
-    # Проверка наличия букв в разных регистрах
     if not re.search(r'[a-z]', password) or not re.search(r'[A-Z]', password):
         return "Слабый пароль: пароль должен содержать буквы в разных регистрах"
-    # Проверка наличия специальных символов
     if not re.search(r'[@_!#$%^&*()<>?/\|}{~:]', password):
         return "Слабый пароль: пароль должен содержать хотя бы один специальный символ"
-    # Если пароль прошел все проверки, считаем его надежным
     return "Надежный пароль"
+
 # Функция для обработки команды /verify_password
 def verify_password_command(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Отправьте пароль, который вы хотите проверить на надежность.")
 
 # Функция для получения информации о релизе
 def get_release(update: Update, context: CallbackContext) -> None:
-    result = remote_command('lsb_release -a')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'cat /etc/os-release')
     update.message.reply_text(result)
+
 # Функция для получения информации о системе
 def get_uname(update: Update, context: CallbackContext) -> None:
-    result = remote_command('uname -a')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'uname -a')
     update.message.reply_text(result)
+
 # Функция для получения времени работы системы
 def get_uptime(update: Update, context: CallbackContext) -> None:
-    result = remote_command('uptime')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'uptime')
     update.message.reply_text(result)
+
 # Функция для получения информации о состоянии файловой системы
 def get_df(update: Update, context: CallbackContext) -> None:
-    result = remote_command('df -h')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'df -h')
     update.message.reply_text(result)
+
 # Функция для получения информации о состоянии оперативной памяти
 def get_free(update: Update, context: CallbackContext) -> None:
-    result = remote_command('free -m')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'free -m')
     update.message.reply_text(result)
+
 # Функция для получения информации о производительности системы
 def get_mpstat(update: Update, context: CallbackContext) -> None:
-    result = remote_command('mpstat')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'mpstat')
     update.message.reply_text(result)
+
 # Функция для получения информации о работающих пользователях
 def get_w(update: Update, context: CallbackContext) -> None:
-    result = remote_command('w')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'w')
     update.message.reply_text(result)
+
 # Функция для получения последних входов в систему
 def get_auths(update: Update, context: CallbackContext) -> None:
-    result = remote_command('last -n 10')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'last -n 10')
     update.message.reply_text(result)
+
 # Функция для получения последних критических событий
 def get_critical(update: Update, context: CallbackContext) -> None:
-    result = remote_command('journalctl -p crit -n 5')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'journalctl -p crit -n 5')
     update.message.reply_text(result)
+
 # Функция для получения запущенных процессах
 def get_ps(update: Update, context: CallbackContext) -> None:
-    result = remote_command('ps')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'ps')
     update.message.reply_text(result)
+
 # Функция для получения информации о используемых портах
 def get_ss(update: Update, context: CallbackContext) -> None:
-    result = remote_command('ss -tulwnH')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'ss -tulwnH')
     update.message.reply_text(result)
+
 # Функция для получения информации о используемых сервисах
 def get_services(update: Update, context: CallbackContext) -> None:
-    result = remote_command('systemctl --type=service')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'ps -e -o comm=')
     services = result.split('\n')[:30]
-    # Форматирование текста для улучшения читаемости
     formatted_services = "\n".join([f"• {service}" for service in services if service])
-    # Отправка сообщения с форматированным списком сервисов
-    update.message.reply_text(f"Список  сервисов:\n{formatted_services}") 
+    update.message.reply_text(f"Список сервисов:\n{formatted_services}")
+
 # Функция для получения информации о установленном пакете
 def get_apt_list(update: Update, context: CallbackContext) -> None:
-    result = remote_command('apt list --installed')
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'dpkg-query -f \'${binary:Package}\n\' -W')
     if result:
-    # Выбираем первые 50 строк из результата
         packages = result.split('\n')[:50]
         update.message.reply_text('\n'.join(packages))
         update.message.reply_text("Нажмите на кнопку /search_in_apt_list и отправьте название пакета (через пробел), который вы хотите найти в списке. Важно указать правильное название, например: blt/kali-rolling,now 2.5.3+dfsg-7 amd64 [installed,automatic].")
 
-# Функция для обработки команды /search_in_bot_output
+# Функция для обработки команды /search_in_apt_list
 def search_in_apt_list(update: Update, context: CallbackContext) -> None:
     user_message = update.message.text
     search_text = user_message.split(maxsplit=1)[1] if ' ' in user_message else None
@@ -142,22 +156,36 @@ def search_in_apt_list(update: Update, context: CallbackContext) -> None:
     if not search_text:
         update.message.reply_text('Пожалуйста, укажите название пакета для поиска через ПРОБЕЛ после команды /search_in_apt_list')
         return
-    # Получаем список установленных пакетов
-    apt_list_result = remote_command('apt list --installed')
+
+    apt_list_result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'dpkg-query -f \'${binary:Package}\n\' -W')
     if apt_list_result:
-        # Ищем пакет в выводе команды apt list
         if search_text in apt_list_result:
             update.message.reply_text(f'Пакет "{search_text}" установлен на удаленной машине.')
         else:
             update.message.reply_text(f'Пакет "{search_text}" не найден в списке установленных пакетов.')
     else:
         update.message.reply_text('Не удалось получить список установленных пакетов.')
-        
-# Функция для получения информации о используемых портах
-def get_repl_logs(update: Update, context: CallbackContext) -> None:
-    result = remote_command('tail -n 20 /var/log/postgresql/postgresql-13-main.log')
-    update.message.reply_text(result)
 
+# Команда для выполнения на удаленной машине
+def execute_command(update: Update, context: CallbackContext) -> None:
+    password = os.getenv('PGPASSWORD')  # Получение пароля из переменных окружения
+    if not password:
+        update.message.reply_text('Пароль не был предоставлен. Пожалуйста, попробуйте снова.')
+        return
+
+    command = f'bash backup.sh {password}'
+    hostname = os.getenv('HOST2')
+    port = int(os.getenv('PORT2'))
+    username = os.getenv('USER2')
+    ssh_password = os.getenv('PASSWORD2')
+    
+    result = remote_command(paramiko.SSHClient(), hostname, port, username, ssh_password, command)
+    update.message.reply_text(f"Command result:\n{result}")
+
+#Функция для получения логов репликации базы данных с удаленной машины: 
+def get_repl_logs(update: Update, context: CallbackContext) -> None:
+    result = remote_command(paramiko.SSHClient(), os.getenv('HOST1'), os.getenv('PORT1'), os.getenv('USER1'), os.getenv('PASSWORD1'), 'tail -n 20 /var/log/postgresql/postgresql-13-main.log')
+    update.message.reply_text(result)
 
 # Функция для подключения к базе данных и поиску информации (телефонов или адресов почт):
 def get_from_db(dbname=None, user=None, password=None, host=None, port=None):
@@ -184,7 +212,7 @@ def get_from_db(dbname=None, user=None, password=None, host=None, port=None):
 
 # Обработчик команды /get_emails
 def get_emails(update: Update, context: CallbackContext):
-    emails, _ =  get_from_db()
+    emails, _ = get_from_db()
     if emails:
         response = "Список электронных писем:\n"
         for email in emails:
@@ -195,7 +223,7 @@ def get_emails(update: Update, context: CallbackContext):
 
 # Обработчик команды /get_phone_numbers
 def get_phone_numbers(update: Update, context: CallbackContext):
-    _, phone_numbers =  get_from_db()
+    _, phone_numbers = get_from_db()
     if phone_numbers:
         response = "Список телефонных номеров:\n"
         for phone_number in phone_numbers:
@@ -207,10 +235,10 @@ def get_phone_numbers(update: Update, context: CallbackContext):
 # Функция для обработки команды /start
 def start(update: Update, context: CallbackContext) -> None:
     commands1 = "Доступные команды:\n/find_phone_numbers - для поиска телефонных номеров\n/find_emails - для поиска адресов электронных почт\n/verify_password - для проверки надежности пароля"
-    commands2 = "Доступные команды для получения информации о удаленной машине:\n/get_release - получение информации о релизе\n/get_uname - получение информации о системе\n/get_uptime - получение времени работы системы\n/get_df - получение информации о состоянии файловой системы\n/get_free - получение информации о состоянии оперативной памяти\n/get_mpstat - получение информации о производительности системы\n/get_w - получение информации о работающих пользователях\n/get_auths - получение последних входов в систему\n/get_critical - получение последних критических событийы\n/get_ps - получение информации о запущенных процессах\n/get_ss - получение информации о используемых портах\n/get_apt_list - получение информации об установленных пакетах\n/search_in_apt_list - поиск пакета в списке установленных\n/get_services - получение информации о используемых сервисах\n/get_repl_logs - получение логов о репликации базы данных\n/get_emails - получение информации о имеющихся записях в базе данных с адресами электронных почт\n/get_phone_numbers - получение логов о репликации базы данных"
+    commands2 = "Доступные команды для получения информации о удаленной машине:\n/get_release - получение информации о релизе\n/get_uname - получение информации о системе\n/get_uptime - получение времени работы системы\n/get_df - получение информации о состоянии файловой системы\n/get_free - получение информации о состоянии оперативной памяти\n/get_mpstat - получение информации о производительности системы\n/get_w - получение информации о работающих пользователях\n/get_auths - получение последних входов в систему\n/get_critical - получение последних критических событийы\n/get_ps - получение информации о запущенных процессах\n/get_ss - получение информации о используемых портах\n/get_apt_list - получение информации об установленных пакетах\n/search_in_apt_list - поиск пакета в списке установленных\n/get_services - получение информации о используемых сервисах\n/get_repl_db - создание репликации базы данных\n/get_repl_logs - получение логов о репликации базы данных\n/get_emails - получение информации о имеющихся записях в базе данных с адресами электронных почт\n/get_phone_numbers - получение логов о репликации базы данных"
     update.message.reply_text(commands1)
     update.message.reply_text(commands2)
-  
+
 #Функция в которой обрабатываются слова и предложения отправленные пользователем
 def handle_text(update: Update, context: CallbackContext) -> None:
     text = update.message.text
@@ -352,10 +380,12 @@ def is_word_or_sentence(text):
     else:
         return "предложение"   
 
-#Пусть к файлу .env
+# Пусть к файлу .env
 dotenv_path = Path('user.env')
 load_dotenv(dotenv_path=dotenv_path)
-        
+
+WAIT_FOR_REPLY = 1
+
 def main() -> None:
     # Создаем объект Updater и передаем ему токен вашего бота
     bot_token = os.getenv("TELEGRAM_TOKEN")
@@ -382,19 +412,19 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("get_apt_list", get_apt_list))
     dispatcher.add_handler(CommandHandler("search_in_apt_list", search_in_apt_list))
     dispatcher.add_handler(CommandHandler("get_services", get_services))
+    dispatcher.add_handler(CommandHandler("get_repl_db", execute_command))
     dispatcher.add_handler(CommandHandler("get_repl_logs", get_repl_logs))
     dispatcher.add_handler(CommandHandler('get_emails', get_emails))
     dispatcher.add_handler(CommandHandler('get_phone_numbers', get_phone_numbers))
 
-    # Запускаем бота
     updater.start_polling()
+    gif_path = 'bot_ask.gif'
+    updater.bot.send_animation(chat_id='1031374406', animation=open(gif_path, "rb"))
     updater.bot.send_message(chat_id=os.getenv("CHAT_ID"), text="Чего надо хозяин! Я твой бот. Я могу выполнять различные действия. Попробуй команду /start, чтобы узнать больше.")
-    # Отправка изображения после запуска бота
-    photo_path = 'ask_bot.jpg'  # Путь к вашему изображению
-    updater.bot.send_photo(chat_id='1031374406', photo=open(photo_path, "rb"))
-    # Останавливаем бота при нажатии Ctrl+C
+
     updater.idle()
+
 if __name__ == '__main__':
     main()
-    
-logging.debug('Конец программы')
+
+logger.debug('Конец программы')
